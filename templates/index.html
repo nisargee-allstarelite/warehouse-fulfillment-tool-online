@@ -104,8 +104,8 @@
     <div><b id="stat-orders">-</b>open orders</div>
     <div><b id="stat-bins">-</b>bins in use</div>
     <div><b id="stat-waiting">-</b>waiting for a bin</div>
-    <div><a href="/history" style="color:var(--muted); font-size:13px;">Shipping History</a></div>
-    <div><a href="/logout" style="color:var(--muted); font-size:13px;">Log out</a></div>
+    <div><a href="{{ url_for('history_page') }}" style="color:var(--muted); font-size:13px;">Shipping History</a></div>
+    <div><a href="{{ url_for('logout') }}" style="color:var(--muted); font-size:13px;">Log out</a></div>
   </div>
 </header>
 
@@ -179,6 +179,7 @@
 </div>
 
 <script>
+const API_BASE = "{{ url_prefix }}";
 let currentData = { pick_sheet: [], bins: [] };
 let selectedBins = new Set();
 let catsByDetailId = {};
@@ -203,7 +204,7 @@ function formatDeadline(isoString) {
 }
 
 async function loadData() {
-  const res = await fetch("/api/state");
+  const res = await fetch(`${API_BASE}/api/state`);
   currentData = await res.json();
   document.getElementById("stat-orders").textContent = currentData.total_orders;
   document.getElementById("stat-bins").textContent = `${currentData.bins_in_use}/${currentData.batch_size}`;
@@ -304,7 +305,7 @@ function toggleDetail(id) {
 }
 
 async function togglePick(foId, lineItemIndex, picked) {
-  await fetch("/api/toggle_pick", {
+  await fetch(`${API_BASE}/api/toggle_pick`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ fo_id: foId, line_item_index: lineItemIndex, picked }),
@@ -318,7 +319,7 @@ async function selectAllInCategory(detailId, picked) {
   const calls = [];
   cat.items.forEach(item => {
     item.bins.forEach(b => {
-      calls.push(fetch("/api/toggle_pick", {
+      calls.push(fetch(`${API_BASE}/api/toggle_pick`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fo_id: b.fo_id, line_item_index: b.line_item_index, picked }),
@@ -375,7 +376,7 @@ function toggleSelectAllBins(checked) {
 }
 
 async function refreshNow() {
-  await fetch("/api/refresh", { method: "POST" });
+  await fetch(`${API_BASE}/api/refresh`, { method: "POST" });
   setTimeout(loadData, 1000);
 }
 
@@ -392,7 +393,7 @@ async function buyBins(bins) {
   if (!confirmed) return;
 
   try {
-    const startRes = await fetch("/api/buy_labels", {
+    const startRes = await fetch(`${API_BASE}/api/buy_labels`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bins }),
@@ -406,7 +407,7 @@ async function buyBins(bins) {
     let data;
     while (true) {
       await new Promise(r => setTimeout(r, 2000));
-      const statusRes = await fetch(`/api/job_status/${jobId}`);
+      const statusRes = await fetch(`${API_BASE}/api/job_status/${jobId}`);
       const statusData = await statusRes.json();
       if (statusData.status === "done") { data = statusData.response; break; }
     }

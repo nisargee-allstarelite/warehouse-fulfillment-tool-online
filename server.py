@@ -78,6 +78,15 @@ if not app.secret_key:
     raise RuntimeError("FLASK_SECRET_KEY is not set in .env - the site cannot start without it.")
 
 
+@app.context_processor
+def inject_url_prefix():
+    # So templates' JS can prefix its own fetch() calls (e.g. "/online/api/state")
+    # instead of hardcoding "/api/state", which would break behind the Nginx
+    # /online proxy - request.script_root reflects whatever _PrefixMiddleware
+    # set above, and is just "" for local/unprefixed dev.
+    return {"url_prefix": request.script_root}
+
+
 @app.before_request
 def require_login():
     if request.endpoint in ("login", "static"):
@@ -460,6 +469,13 @@ def api_buy_labels():
     with jobs_lock:
         jobs[job_id] = {"status": "running", "response": None}
 
+    # Captured here (still inside the request) because run_job() below runs
+    # in a background thread with no request context, where url_for() would
+    # raise - this is the same prefix _PrefixMiddleware/request.script_root
+    # would resolve to, just grabbed early so the label download link is
+    # still correct behind the Nginx /online proxy.
+    label_url_prefix = request.script_root
+
     def run_job():
         try:
             results = shipping.buy_labels_for_bins(items, notify_customer=NOTIFY_CUSTOMER)
@@ -477,7 +493,7 @@ def api_buy_labels():
 
             response = {
                 "results": results,
-                "combined_pdf_url": f"/api/labels/{combined_filename}" if combined_filename else None,
+                "combined_pdf_url": f"{label_url_prefix}/api/labels/{combined_filename}" if combined_filename else None,
                 "combined_pdf_page_count": len(included),
                 "combined_pdf_skipped": skipped,
             }
@@ -525,6 +541,10 @@ def api_reconcile():
     with jobs_lock:
         jobs[job_id] = {"status": "running", "response": None}
 
+    # See the matching comment in api_buy_labels() above - captured now
+    # because run_job() runs in a background thread with no request context.
+    label_url_prefix = request.script_root
+
     def run_job():
         try:
             result = shipping.reconcile_pending_purchases()
@@ -533,7 +553,7 @@ def api_reconcile():
                 "fixed_count": len(result["fixed"]),
                 "fixed": result["fixed"],
                 "still_failed": result["still_failed"],
-                "combined_pdf_url": f"/api/labels/{result['combined_pdf_filename']}" if result["combined_pdf_filename"] else None,
+                "combined_pdf_url": f"{label_url_prefix}/api/labels/{result['combined_pdf_filename']}" if result["combined_pdf_filename"] else None,
             }
             with jobs_lock:
                 jobs[job_id] = {"status": "done", "response": response}

@@ -48,8 +48,8 @@
 <header>
   <h1>Shipping History</h1>
   <div class="stats">
-    <div><a href="/" style="color:var(--muted); font-size:13px;">Back to Dashboard</a></div>
-    <div><a href="/logout" style="color:var(--muted); font-size:13px;">Log out</a></div>
+    <div><a href="{{ url_for('index') }}" style="color:var(--muted); font-size:13px;">Back to Dashboard</a></div>
+    <div><a href="{{ url_for('logout') }}" style="color:var(--muted); font-size:13px;">Log out</a></div>
   </div>
 </header>
 
@@ -86,6 +86,7 @@
 </div>
 
 <script>
+const API_BASE = "{{ url_prefix }}";
 let currentEntries = [];
 let searchDebounce = null;
 
@@ -107,7 +108,7 @@ async function loadHistory() {
   const search = document.getElementById("search").value.trim();
   document.getElementById("status-line").textContent = "Loading...";
 
-  const res = await fetch("/api/shipping_history?search=" + encodeURIComponent(search));
+  const res = await fetch(`${API_BASE}/api/shipping_history?search=` + encodeURIComponent(search));
   const data = await res.json();
   currentEntries = data.entries || [];
 
@@ -134,7 +135,7 @@ function renderRows() {
       : `<span class="status-badge status-failure">Failed</span>`;
 
     const labelHtml = e.combined_pdf_filename
-      ? `<a class="label-link" href="/api/labels/${e.combined_pdf_filename}" target="_blank">Open PDF</a>`
+      ? `<a class="label-link" href="${API_BASE}/api/labels/${e.combined_pdf_filename}" target="_blank">Open PDF</a>`
       : `<span class="muted">—</span>`;
 
     return `
@@ -158,7 +159,7 @@ async function runReconcile() {
   btn.textContent = "Starting...";
 
   try {
-    const startRes = await fetch("/api/reconcile", { method: "POST" });
+    const startRes = await fetch(`${API_BASE}/api/reconcile`, { method: "POST" });
     const startData = await startRes.json();
 
     if (startData.error) { alert("Error: " + startData.error); return; }
@@ -169,7 +170,7 @@ async function runReconcile() {
     let data;
     while (true) {
       await new Promise(r => setTimeout(r, 2000));
-      const statusRes = await fetch(`/api/job_status/${jobId}`);
+      const statusRes = await fetch(`${API_BASE}/api/job_status/${jobId}`);
       const statusData = await statusRes.json();
       if (statusData.status === "done") { data = statusData.response; break; }
     }
