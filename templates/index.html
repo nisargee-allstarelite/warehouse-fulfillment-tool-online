@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Online Orders - Pick & Ship</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --border: #e3e5e9;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --accent: #0f766e;
+    --accent-light: #ccfbf1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 24px 0 12px 0; }
+  .stats { display: flex; gap: 24px; font-size: 14px; color: var(--muted); }
+  .stats b { color: var(--text); font-size: 18px; display: block; }
+  .top-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  input#search {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 14px; width: 280px;
+  }
+  button {
+    background: var(--accent); color: white; border: none; padding: 8px 16px;
+    border-radius: 8px; font-size: 14px; cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { background: #d1d5db; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  #status-line { font-size: 13px; color: var(--muted); }
+
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 12px; }
+  .cat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; cursor: pointer; }
+  .cat-card .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .cat-name { font-weight: 600; font-size: 14px; }
+  .cat-count { background: var(--accent-light); color: var(--accent); font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px; }
+  .cat-detail { display: none; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 420px; overflow-y: auto; }
+  .cat-detail.open { display: block; }
+
+  .sku-block { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+  .sku-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; }
+  .sku-sub { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .bin-row { font-size: 12px; color: var(--text); padding: 3px 0; display: flex; align-items: center; gap: 6px; }
+  .bin-row .bin-tag { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; font-weight: 700; min-width: 32px; text-align: center; }
+  .bin-row.picked { color: var(--muted); text-decoration: line-through; }
+  .bin-row .store-tag { color: var(--muted); font-size: 11px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-top: 8px; }
+  thead th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg); }
+  tbody td { padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; display: inline-block; }
+  .badge-ready { background: var(--accent-light); color: #166534; }
+  .badge-notready { background: #fef3c7; color: #92400e; }
+  .muted-cell { color: var(--muted); }
+
+  .buy-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  .buy-bar input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; width: 90px; }
+  .buy-bar .ship-btn { background: #b45309; }
+
+  #modal-overlay, #ship-modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  #modal-overlay.open, #ship-modal-overlay.open { display: flex; }
+  #modal-box, #ship-modal-box {
+    background: var(--card); border-radius: 12px; padding: 24px; max-width: 560px; width: 90%;
+    max-height: 80vh; overflow-y: auto;
+  }
+  #modal-box h2, #ship-modal-box h2 { margin: 0 0 12px 0; font-size: 16px; }
+  .ship-result-row { padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .ship-result-row.success { color: #166534; }
+  .ship-result-row.failure { color: #b91c1c; }
+  .ship-result-row a { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Online Orders - Pick &amp; Ship</h1>
+  <div class="stats">
+    <div><b id="stat-orders">-</b>open orders</div>
+    <div><b id="stat-bins">-</b>bins in use</div>
+    <div><b id="stat-waiting">-</b>waiting for a bin</div>
+    <div><a href="/history" style="color:var(--muted); font-size:13px;">Shipping History</a></div>
+    <div><a href="/logout" style="color:var(--muted); font-size:13px;">Log out</a></div>
+  </div>
+</header>
+
+<div class="top-bar">
+  <input id="search" placeholder="Search categories/SKUs..." oninput="renderPickSheet()">
+  <div>
+    <span id="status-line">Loading...</span>
+    <button class="secondary" onclick="refreshNow()">Refresh now</button>
+  </div>
+</div>
+
+<h2>Pick sheet - by category</h2>
+<div id="grid"></div>
+<div id="empty-pick" style="color:var(--muted); text-align:center; padding:40px 0; display:none;">No categories match your search.</div>
+
+<h2>Bins</h2>
+<div class="buy-bar">
+  <label style="font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+    <input type="checkbox" id="select-all-bins" onclick="toggleSelectAllBins(this.checked)">
+    Select all bins
+  </label>
+  <button class="ship-btn" onclick="buySelected()">Buy labels for checked bins</button>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th></th>
+      <th>Bin</th>
+      <th>Order</th>
+      <th>Store</th>
+      <th>Customer</th>
+      <th>Picked</th>
+      <th>Status</th>
+      <th>Score</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="bin-rows"></tbody>
+</table>
+<div id="empty-bins" style="color:var(--muted); text-align:center; padding:40px 0; display:none;">No open orders right now.</div>
+
+<h2>Waiting queue <span style="color:var(--muted); font-weight:400; font-size:13px;">(next up when a bin frees)</span></h2>
+<table>
+  <thead>
+    <tr>
+      <th>Order</th>
+      <th>Store</th>
+      <th>Waiting since</th>
+      <th>Ship-by deadline</th>
+      <th>Priority score</th>
+    </tr>
+  </thead>
+  <tbody id="waiting-rows"></tbody>
+</table>
+<div id="empty-waiting" style="color:var(--muted); text-align:center; padding:20px 0; display:none;">Nobody's waiting - every open order has a bin.</div>
+
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal-box">
+    <h2 id="modal-title"></h2>
+    <div id="modal-content"></div>
+    <button id="modal-close" onclick="closeModal(event)">Close</button>
+  </div>
+</div>
+
+<div id="ship-modal-overlay" onclick="closeShipModal(event)">
+  <div id="ship-modal-box">
+    <h2 id="ship-modal-title"></h2>
+    <div id="ship-modal-content"></div>
+    <button id="ship-modal-close" onclick="closeShipModal(event)">Close</button>
+  </div>
+</div>
+
+<script>
+let currentData = { pick_sheet: [], bins: [] };
+let selectedBins = new Set();
+let catsByDetailId = {};
+
+function catDetailId(name) {
+  return "cat-" + btoa(unescape(encodeURIComponent(name))).replace(/[^a-zA-Z0-9]/g, "");
+}
+
+function timeAgo(isoString) {
+  if (!isoString) return "never";
+  const seconds = Math.floor((new Date() - new Date(isoString)) / 1000);
+  if (seconds < 60) return seconds + "s ago";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+  return Math.floor(seconds / 3600) + "h ago";
+}
+
+function formatDeadline(isoString) {
+  if (!isoString) return "-";
+  const hoursLeft = (new Date(isoString) - new Date()) / 1000 / 3600;
+  if (hoursLeft >= 0) return `in ${Math.floor(hoursLeft)}h`;
+  return `${Math.floor(-hoursLeft)}h overdue`;
+}
+
+async function loadData() {
+  const res = await fetch("/api/state");
+  currentData = await res.json();
+  document.getElementById("stat-orders").textContent = currentData.total_orders;
+  document.getElementById("stat-bins").textContent = `${currentData.bins_in_use}/${currentData.batch_size}`;
+  document.getElementById("stat-waiting").textContent = currentData.waiting.count;
+
+  const pollingText = currentData.is_polling ? " (refreshing now...)" : "";
+  const errorText = currentData.last_error ? ` - last error: ${currentData.last_error}` : "";
+  document.getElementById("status-line").textContent =
+    `Updated ${timeAgo(currentData.last_updated)}${pollingText}${errorText}`;
+
+  renderPickSheet();
+  renderBins();
+  renderWaiting();
+}
+
+function renderWaiting() {
+  const tbody = document.getElementById("waiting-rows");
+  const empty = document.getElementById("empty-waiting");
+  const waiting = currentData.waiting.top;
+
+  if (waiting.length === 0) {
+    tbody.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+
+  tbody.innerHTML = waiting.map(w => `
+    <tr>
+      <td>${w.order_name}</td>
+      <td>${w.store_label}</td>
+      <td class="muted-cell">${timeAgo(w.created_at)}</td>
+      <td class="muted-cell">${formatDeadline(w.fulfill_by)}</td>
+      <td>${w.priority_score}</td>
+    </tr>
+  `).join("");
+}
+
+function renderPickSheet() {
+  const query = document.getElementById("search").value.trim().toUpperCase();
+  const grid = document.getElementById("grid");
+  const empty = document.getElementById("empty-pick");
+  grid.innerHTML = "";
+
+  const filtered = currentData.pick_sheet.filter(cat =>
+    cat.category.toUpperCase().includes(query) ||
+    cat.items.some(it => (it.sku + it.title).toUpperCase().includes(query))
+  );
+  empty.style.display = filtered.length === 0 ? "block" : "none";
+
+  filtered.forEach(cat => {
+    const detailId = catDetailId(cat.category);
+    catsByDetailId[detailId] = cat;
+    const skuHtml = cat.items.map(item => {
+      const binsHtml = item.bins.map(b => {
+        const checkedAttr = b.picked ? "checked" : "";
+        return `
+          <div class="bin-row ${b.picked ? 'picked' : ''}">
+            <input type="checkbox" ${checkedAttr} onclick="togglePick('${b.fo_id}', ${b.line_item_index}, this.checked)">
+            <span class="bin-tag">#${b.bin}</span>
+            <span>${b.order_name}</span>
+            <span class="store-tag">(${b.store_label})</span>
+            <span>- qty ${b.qty}</span>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="sku-block">
+          <div class="sku-head">
+            <span>${item.title || item.sku}${item.variant_title ? ' - ' + item.variant_title : ''}</span>
+            <span>${item.total_qty} total</span>
+          </div>
+          <div class="sku-sub">${item.sku}</div>
+          ${binsHtml}
+        </div>
+      `;
+    }).join("");
+
+    const card = document.createElement("div");
+    card.className = "cat-card";
+    card.innerHTML = `
+      <div class="row">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" title="Mark every item in this category picked" onclick="event.stopPropagation(); selectAllInCategory('${detailId}', this.checked)">
+          <span class="cat-name" style="cursor:pointer;" onclick="toggleDetail('${detailId}')">${cat.category}</span>
+        </div>
+        <div class="cat-count" style="cursor:pointer;" onclick="toggleDetail('${detailId}')">${cat.sku_count} SKU${cat.sku_count === 1 ? '' : 's'}</div>
+      </div>
+      <div class="cat-detail" id="${detailId}">${skuHtml}</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function toggleDetail(id) {
+  document.getElementById(id).classList.toggle("open");
+}
+
+async function togglePick(foId, lineItemIndex, picked) {
+  await fetch("/api/toggle_pick", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fo_id: foId, line_item_index: lineItemIndex, picked }),
+  });
+  loadData();
+}
+
+async function selectAllInCategory(detailId, picked) {
+  const cat = catsByDetailId[detailId];
+  if (!cat) return;
+  const calls = [];
+  cat.items.forEach(item => {
+    item.bins.forEach(b => {
+      calls.push(fetch("/api/toggle_pick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fo_id: b.fo_id, line_item_index: b.line_item_index, picked }),
+      }));
+    });
+  });
+  await Promise.all(calls);
+  loadData();
+}
+
+function renderBins() {
+  const tbody = document.getElementById("bin-rows");
+  const empty = document.getElementById("empty-bins");
+
+  if (currentData.bins.length === 0) {
+    tbody.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+
+  tbody.innerHTML = currentData.bins.map(b => {
+    const statusHtml = b.all_picked
+      ? `<span class="badge badge-ready">Ready to ship</span>`
+      : `<span class="badge badge-notready">${b.picked_count}/${b.item_count} picked</span>`;
+    const checked = selectedBins.has(b.bin) ? "checked" : "";
+
+    return `
+      <tr>
+        <td><input type="checkbox" ${checked} onclick="toggleBinSelect(${b.bin}, this.checked)"></td>
+        <td><b>#${b.bin}</b></td>
+        <td>${b.order_name}</td>
+        <td>${b.store_label}</td>
+        <td>${b.customer_name || '<span style="color:var(--muted)">-</span>'}</td>
+        <td>${b.picked_count}/${b.item_count}</td>
+        <td>${statusHtml}</td>
+        <td class="muted-cell">${b.priority_score}</td>
+        <td>
+          <button class="secondary" style="padding:4px 10px; font-size:12px;" onclick="buyBins([${b.bin}])" ${b.all_picked ? '' : 'disabled title="Finish picking every item in this bin first"'}>Buy label</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function toggleBinSelect(binNum, checked) {
+  if (checked) selectedBins.add(binNum); else selectedBins.delete(binNum);
+}
+
+function toggleSelectAllBins(checked) {
+  selectedBins.clear();
+  if (checked) currentData.bins.forEach(b => selectedBins.add(b.bin));
+  renderBins();
+}
+
+async function refreshNow() {
+  await fetch("/api/refresh", { method: "POST" });
+  setTimeout(loadData, 1000);
+}
+
+function buySelected() {
+  if (selectedBins.size === 0) { alert("Check at least one bin first."); return; }
+  buyBins(Array.from(selectedBins));
+}
+
+async function buyBins(bins) {
+  const confirmed = confirm(
+    `This will purchase REAL shipping labels for ${bins.length} order(s) (bin${bins.length === 1 ? '' : 's'} ${bins.join(', ')}).\n\n` +
+    `This spends real money and cannot be undone. Continue?`
+  );
+  if (!confirmed) return;
+
+  try {
+    const startRes = await fetch("/api/buy_labels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bins }),
+    });
+    const startData = await startRes.json();
+    if (startData.error) { alert("Error: " + startData.error); return; }
+
+    const jobId = startData.job_id;
+    document.getElementById("status-line").textContent = "Buying labels - this can take a minute, please wait...";
+
+    let data;
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      const statusRes = await fetch(`/api/job_status/${jobId}`);
+      const statusData = await statusRes.json();
+      if (statusData.status === "done") { data = statusData.response; break; }
+    }
+
+    if (data.error) { alert("Error: " + data.error); return; }
+    showShipResults(bins, data);
+    selectedBins.clear();
+  } catch (err) {
+    alert("Something went wrong: " + err.message);
+  } finally {
+    setTimeout(loadData, 1000);
+  }
+}
+
+function showShipResults(bins, data) {
+  const results = data.results;
+  const succeeded = results.filter(r => r.success);
+  const failed = results.filter(r => !r.success);
+
+  document.getElementById("ship-modal-title").textContent =
+    `Bins ${bins.join(', ')} - ${succeeded.length} shipped, ${failed.length} failed`;
+
+  let combinedHtml = "";
+  if (data.combined_pdf_url) {
+    combinedHtml = `
+      <div style="margin-bottom:16px; padding:12px; background:var(--accent-light); border-radius:8px;">
+        <a href="${data.combined_pdf_url}" target="_blank" style="font-size:14px;">
+          Download all ${data.combined_pdf_page_count} label(s) as one PDF
+        </a>
+        <div style="color:var(--muted); font-size:12px; margin-top:4px;">One file, all labels as separate pages - print it once.</div>
+      </div>
+    `;
+  }
+
+  const rowsHtml = results.map(r => {
+    if (r.success) {
+      return `
+        <div class="ship-result-row success">
+          Bin #${r.bin} - ${r.order_name} (${r.store_label}) - shipped (tracking: ${r.tracking_number || 'n/a'})
+        </div>
+      `;
+    }
+    return `
+      <div class="ship-result-row failure">
+        Bin #${r.bin} - ${r.order_name} (${r.store_label}) - failed: ${r.error || "Unknown error"}
+      </div>
+    `;
+  }).join("");
+
+  document.getElementById("ship-modal-content").innerHTML = combinedHtml + rowsHtml;
+  document.getElementById("ship-modal-overlay").classList.add("open");
+}
+
+function closeShipModal(event) {
+  if (event.target.id === "ship-modal-overlay" || event.target.id === "ship-modal-close") {
+    document.getElementById("ship-modal-overlay").classList.remove("open");
+  }
+}
+
+function closeModal(event) {
+  if (event.target.id === "modal-overlay" || event.target.id === "modal-close") {
+    document.getElementById("modal-overlay").classList.remove("open");
+  }
+}
+
+loadData();
+setInterval(loadData, 15000);
+</script>
+
+</body>
+</html>

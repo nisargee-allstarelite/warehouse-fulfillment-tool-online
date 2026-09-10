@@ -1,0 +1,7 @@
+.env
+venv/
+__pycache__/
+*.pyc
+state.json
+shipping_history.jsonl
+labels/

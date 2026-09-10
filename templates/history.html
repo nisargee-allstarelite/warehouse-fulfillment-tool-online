@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shipping History - Online Orders Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --border: #e3e5e9; --text: #1a1d23;
+    --muted: #6b7280; --accent: #0f766e; --accent-light: #ccfbf1;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+  header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
+  h1 { font-size: 20px; margin: 0; }
+  .stats { display: flex; gap: 24px; font-size: 14px; color: var(--muted); }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  input#search { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; width: 320px; }
+  button { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  button:hover { opacity: 0.9; }
+  button:disabled { background: #d1d5db; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  #status-line { font-size: 13px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  thead th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg); }
+  tbody td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg); }
+  .status-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; display: inline-block; }
+  .status-success { background: var(--accent-light); color: #166534; }
+  .status-failure { background: #fee2e2; color: #b91c1c; }
+  a.label-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+  a.label-link:hover { text-decoration: underline; }
+  .muted { color: var(--muted); }
+  #empty { color: var(--muted); text-align: center; padding: 60px 0; display: none; }
+  #reconcile-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+  #reconcile-modal-overlay.open { display: flex; }
+  #reconcile-modal-box { background: var(--card); border-radius: 12px; padding: 24px; max-width: 480px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  #reconcile-modal-box h2 { margin: 0 0 12px 0; font-size: 16px; }
+  #reconcile-modal-close { margin-top: 16px; }
+  .reconcile-result-line { padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .reconcile-result-line:last-child { border-bottom: none; }
+  .reconcile-fixed { color: #166534; }
+  .reconcile-unshipped { color: #b91c1c; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Shipping History</h1>
+  <div class="stats">
+    <div><a href="/" style="color:var(--muted); font-size:13px;">Back to Dashboard</a></div>
+    <div><a href="/logout" style="color:var(--muted); font-size:13px;">Log out</a></div>
+  </div>
+</header>
+
+<div class="top-bar">
+  <input id="search" placeholder="Search by order, tracking number, or store..." oninput="onSearchInput()">
+  <div>
+    <span id="status-line">Loading...</span>
+    <button class="secondary" id="reconcile-btn" onclick="runReconcile()">Recheck timed-out purchases</button>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Bin</th>
+      <th>Order</th>
+      <th>Store</th>
+      <th>Status</th>
+      <th>Tracking</th>
+      <th>Label</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<div id="empty">No shipping history matches your search.</div>
+
+<div id="reconcile-modal-overlay" onclick="closeReconcileModal(event)">
+  <div id="reconcile-modal-box">
+    <h2 id="reconcile-modal-title">Recheck Results</h2>
+    <div id="reconcile-modal-content"></div>
+    <button id="reconcile-modal-close" onclick="closeReconcileModal(event)">Close</button>
+  </div>
+</div>
+
+<script>
+let currentEntries = [];
+let searchDebounce = null;
+
+function timeAgo(isoString) {
+  if (!isoString) return "";
+  const seconds = Math.floor((new Date() - new Date(isoString)) / 1000);
+  if (seconds < 60) return seconds + "s ago";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+  return Math.floor(seconds / 86400) + "d ago";
+}
+
+function onSearchInput() {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(loadHistory, 250);
+}
+
+async function loadHistory() {
+  const search = document.getElementById("search").value.trim();
+  document.getElementById("status-line").textContent = "Loading...";
+
+  const res = await fetch("/api/shipping_history?search=" + encodeURIComponent(search));
+  const data = await res.json();
+  currentEntries = data.entries || [];
+
+  document.getElementById("status-line").textContent =
+    `${data.count} result${data.count === 1 ? "" : "s"}`;
+
+  renderRows();
+}
+
+function renderRows() {
+  const tbody = document.getElementById("rows");
+  const empty = document.getElementById("empty");
+
+  if (currentEntries.length === 0) {
+    tbody.innerHTML = "";
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+
+  tbody.innerHTML = currentEntries.map(e => {
+    const statusHtml = e.success
+      ? `<span class="status-badge status-success">Shipped</span>`
+      : `<span class="status-badge status-failure">Failed</span>`;
+
+    const labelHtml = e.combined_pdf_filename
+      ? `<a class="label-link" href="/api/labels/${e.combined_pdf_filename}" target="_blank">Open PDF</a>`
+      : `<span class="muted">—</span>`;
+
+    return `
+      <tr>
+        <td class="muted">${timeAgo(e.logged_at)}</td>
+        <td>${e.bin != null ? '#' + e.bin : ''}</td>
+        <td>${e.order_name || ""}</td>
+        <td>${e.store_label || ""}</td>
+        <td>${statusHtml}</td>
+        <td class="muted">${e.tracking_number || (e.error || "")}</td>
+        <td>${labelHtml}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function runReconcile() {
+  const btn = document.getElementById("reconcile-btn");
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+
+  try {
+    const startRes = await fetch("/api/reconcile", { method: "POST" });
+    const startData = await startRes.json();
+
+    if (startData.error) { alert("Error: " + startData.error); return; }
+
+    const jobId = startData.job_id;
+    btn.textContent = "Checking with Shopify... this can take a minute";
+
+    let data;
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      const statusRes = await fetch(`/api/job_status/${jobId}`);
+      const statusData = await statusRes.json();
+      if (statusData.status === "done") { data = statusData.response; break; }
+    }
+
+    if (data.error) { alert("Error: " + data.error); return; }
+
+    showReconcileResults(data);
+    loadHistory();
+  } catch (err) {
+    alert("Something went wrong: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+function showReconcileResults(data) {
+  const content = document.getElementById("reconcile-modal-content");
+
+  if (data.checked === 0) {
+    content.innerHTML = `<p>Nothing to recheck right now - everything's already resolved.</p>`;
+    document.getElementById("reconcile-modal-overlay").classList.add("open");
+    return;
+  }
+
+  let html = `<p style="margin-bottom:12px">Rechecked ${data.checked} timed-out purchase(s):</p>`;
+
+  if (data.fixed_count > 0) {
+    html += `<div class="reconcile-result-line reconcile-fixed">
+      ✅ ${data.fixed_count} order(s) actually purchased fine - records corrected.
+    </div>`;
+  }
+  if (data.still_failed.length > 0) {
+    html += `<div class="reconcile-result-line reconcile-unshipped">
+      ⚠️ ${data.still_failed.length} order(s) confirmed still failed - these need a real retry:
+      <div class="muted" style="margin-top:4px">${data.still_failed.join(", ")}</div>
+    </div>`;
+  }
+  if (data.combined_pdf_url) {
+    html += `<a class="label-link" href="${data.combined_pdf_url}" target="_blank" style="display:inline-block; margin-top:12px;">
+      Download reprintable labels for the corrected orders
+    </a>`;
+  }
+
+  content.innerHTML = html;
+  document.getElementById("reconcile-modal-overlay").classList.add("open");
+}
+
+function closeReconcileModal(event) {
+  if (event.target.id === "reconcile-modal-overlay" || event.target.id === "reconcile-modal-close") {
+    document.getElementById("reconcile-modal-overlay").classList.remove("open");
+  }
+}
+
+loadHistory();
+</script>
+
+</body>
+</html>
