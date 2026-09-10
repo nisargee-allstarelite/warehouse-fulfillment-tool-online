@@ -49,6 +49,29 @@ LOGIN_PASSWORD = os.environ.get("ONLINE_LOGIN_PASSWORD")
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 
+
+class _PrefixMiddleware:
+    """Lets this app be reverse-proxied behind a URL path (e.g. Nginx routing
+    allstarelite.duckdns.org/online -> this app on its own port), so Flask's
+    url_for()-generated links still point to the right place. No-op if
+    URL_PREFIX isn't set (e.g. hitting the app directly on its port)."""
+
+    def __init__(self, wsgi_app, prefix):
+        self.wsgi_app = wsgi_app
+        self.prefix = prefix
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if self.prefix and path.startswith(self.prefix):
+            environ["PATH_INFO"] = path[len(self.prefix):] or "/"
+            environ["SCRIPT_NAME"] = self.prefix
+        return self.wsgi_app(environ, start_response)
+
+
+URL_PREFIX = os.environ.get("URL_PREFIX", "").rstrip("/")
+if URL_PREFIX:
+    app.wsgi_app = _PrefixMiddleware(app.wsgi_app, URL_PREFIX)
+
 if not LOGIN_PASSWORD:
     raise RuntimeError("ONLINE_LOGIN_PASSWORD is not set in .env - the site cannot start without it.")
 if not app.secret_key:
