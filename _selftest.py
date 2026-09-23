@@ -13,7 +13,6 @@ os.environ.setdefault("FLASK_SECRET_KEY", "test")
 
 import categorize
 import batching
-from bins import BinPool
 
 failures = 0
 
@@ -28,6 +27,8 @@ def check(label, condition):
 
 
 # --- categorize.py, against real SKUs/titles from Nisargee's export screenshot ---
+# (categorize.py is no longer used by server.py, but it's harmless leftover -
+# kept working and tested in case it's wired back in somewhere.)
 cases = [
     ("WTSN026-CRDNMSHT-01-KHAKI-38", "", "Crochet Denim Shorts"),
     ("WTSN026-CRODNMSHT-01-KHAKI-40", "", "Crochet Denim Shorts"),
@@ -43,109 +44,114 @@ for sku, title, expected in cases:
     got = categorize.categorize(sku, title)
     check(f"categorize sku={sku!r} title={title!r} -> {got!r}", got == expected)
 
-# --- bins.py (fixed pool, max_bins=5 for this test) ---
-pool = BinPool(max_bins=5)
-b1 = pool.assign("fo1")
-b2 = pool.assign("fo2")
-b3 = pool.assign("fo3")
-check("first three assigns get bins 1,2,3", [b1, b2, b3] == [1, 2, 3])
-
-pool.release("fo2")
-b4 = pool.assign("fo4")
-check("freed bin 2 gets reused for the next assign", b4 == 2)
-
-try:
-    pool.reassign("fo1", b3)  # bin 3 is taken by fo3 - should raise
-    check("reassign onto an occupied bin raises", False)
-except ValueError:
-    check("reassign onto an occupied bin raises", True)
-
-pool.reassign("fo1", 5)
-check("reassign moves fo1 to bin 5", pool.bin_for("fo1") == 5)
-check("fo1's old bin (1) is now free", 1 in pool.free)
-
-try:
-    pool.reassign("fo3", 99)  # out of range for max_bins=5
-    check("reassign beyond max_bins raises", False)
-except ValueError:
-    check("reassign beyond max_bins raises", True)
-
-pool.assign("fo5")  # bin 1 (freed)
-pool.assign("fo6")  # last remaining free slot
-check("pool reports full at max_bins", not pool.has_capacity())
-try:
-    pool.assign("fo7")
-    check("assign() past capacity raises", False)
-except RuntimeError:
-    check("assign() past capacity raises", True)
-
-# --- batching.py ---
+# --- batching.py: simple age + deadline-boost priority score ---
 now = datetime.now(timezone.utc)
 
 
-def make_order(fo_id, hours_old, skus, category="Denim Shorts", fulfill_by=None):
+def make_order(fo_id, hours_old, fulfill_by=None):
     return {
         "fo_id": fo_id,
         "created_at": (now - timedelta(hours=hours_old)).isoformat(),
         "fulfill_by": fulfill_by,
-        "line_items": [{"sku": sku, "category": category} for sku in skus],
     }
 
 
-# Older order should score higher than a much younger, unrelated order.
+# Older order should score higher than a much younger order - no more
+# SKU/category overlap bonus, so age (plus deadline) is the whole story.
 orders = {
-    "old_lonely": make_order("old_lonely", hours_old=50, skus=["SKU-A"]),
-    "new_lonely": make_order("new_lonely", hours_old=1, skus=["SKU-B"]),
+    "old": make_order("old", hours_old=50),
+    "new": make_order("new", hours_old=1),
 }
 scores = batching.score_all(orders, now=now)
-check("plain age: older lonely order scores higher than a new lonely one",
-      scores["old_lonely"] > scores["new_lonely"])
+check("plain age: older order scores higher than a newer one",
+      scores["old"] > scores["new"])
 
-# A cluster of matching SKUs should let a younger order catch up to (but
-# per the cap, not blow past) a much older, unrelated order.
-orders2 = {
-    "old_unrelated": make_order("old_unrelated", hours_old=100, skus=["SKU-Z"]),
-    "young_1": make_order("young_1", hours_old=1, skus=["SKU-MATCH"]),
-    "young_2": make_order("young_2", hours_old=1, skus=["SKU-MATCH"]),
-    "young_3": make_order("young_3", hours_old=1, skus=["SKU-MATCH"]),
-}
-scores2 = batching.score_all(orders2, now=now)
-check("matching cluster boosts young orders above their own bare age",
-      scores2["young_1"] > 1.0)
-check("but the bonus cap still keeps a far-older unrelated order on top",
-      scores2["old_unrelated"] > scores2["young_1"])
+check("compute_priority_score matches score_all for the same order",
+      batching.compute_priority_score(orders["old"], now=now) == scores["old"])
 
 # A real ship-by deadline should raise priority even for a young order.
-orders3 = {
-    "no_deadline": make_order("no_deadline", hours_old=2, skus=["SKU-C"]),
-    "urgent_deadline": make_order("urgent_deadline", hours_old=2, skus=["SKU-D"],
+orders2 = {
+    "no_deadline": make_order("no_deadline", hours_old=2),
+    "urgent_deadline": make_order("urgent_deadline", hours_old=2,
                                    fulfill_by=(now - timedelta(hours=1)).isoformat()),  # already overdue
 }
-scores3 = batching.score_all(orders3, now=now)
+scores2 = batching.score_all(orders2, now=now)
 check("an overdue ship-by deadline raises priority over a plain young order",
-      scores3["urgent_deadline"] > scores3["no_deadline"])
+      scores2["urgent_deadline"] > scores2["no_deadline"])
 
-# choose_new_active_orders: never touches already-active orders, fills
-# only the available slots, picks highest scores first.
-pool_orders = {
-    "active_1": make_order("active_1", hours_old=1, skus=["X"]),   # already active despite being young
-    "wait_old": make_order("wait_old", hours_old=40, skus=["Y"]),
-    "wait_new": make_order("wait_new", hours_old=1, skus=["Z"]),
+# A distant future deadline (outside the urgency window) shouldn't boost at all.
+orders3 = {
+    "no_deadline": make_order("no_deadline", hours_old=2),
+    "far_deadline": make_order("far_deadline", hours_old=2,
+                                fulfill_by=(now + timedelta(days=30)).isoformat()),
 }
-chosen = batching.choose_new_active_orders(pool_orders, currently_active_ids={"active_1"}, available_slots=1, now=now)
-check("choose_new_active_orders picks the highest-scoring WAITING order (not the active one)",
-      chosen == ["wait_old"])
+scores3 = batching.score_all(orders3, now=now)
+check("a far-off deadline (outside the urgency window) gives no boost",
+      scores3["far_deadline"] == scores3["no_deadline"])
 
-chosen_none = batching.choose_new_active_orders(pool_orders, currently_active_ids={"active_1"}, available_slots=0, now=now)
-check("choose_new_active_orders returns nothing when there are no free slots", chosen_none == [])
+# Missing created_at shouldn't blow up - just scores as age 0.
+orphan_score = batching.compute_priority_score({"fo_id": "x", "created_at": None, "fulfill_by": None}, now=now)
+check("an order with no created_at doesn't crash and scores 0", orphan_score == 0.0)
 
 print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
 
 # --- import server.py (checks it wires together without crashing) ---
 import server  # noqa: E402
-check("server.py imported cleanly and BATCH_SIZE is wired from batching.py",
-      server.BATCH_SIZE == batching.ACTIVE_BATCH_SIZE)
-print("bins in use after test moves:", server.bin_pool.in_use_count())
+
+# --- server.py: _parse_bin_name ---
+check("_parse_bin_name splits 'A11' into row A, box 11", server._parse_bin_name("A11") == ("A", 11))
+check("_parse_bin_name handles multi-letter rows like 'AB3'", server._parse_bin_name("AB3") == ("AB", 3))
+check("_parse_bin_name treats blank as unassigned", server._parse_bin_name("") is None)
+check("_parse_bin_name treats None as unassigned", server._parse_bin_name(None) is None)
+check("_parse_bin_name treats malformed text as unassigned", server._parse_bin_name("garbage") is None)
+check("_parse_bin_name treats a bare number as unassigned (no row letter)", server._parse_bin_name("11") is None)
+
+# --- server.py: build_buckets / build_orders_list, against fake in-memory state ---
+server.state["fulfillment_orders"] = {
+    "fo1": {
+        "fo_id": "fo1", "order_id": "gid://shopify/Order/1", "order_name": "#1001",
+        "store_key": "ASE", "store_label": "All Star Elite",
+        "created_at": (now - timedelta(hours=40)).isoformat(), "fulfill_by": None,
+        "customer_name": "Jane D.", "order_admin_url": "https://ase.myshopify.com/admin/orders/1",
+        "priority_score": 40,
+        "line_items": [
+            {"sku": "SKU-A", "title": "Denim Shorts", "variant_title": "36 / Black", "qty": 2, "bin_name": "A11", "picked": False},
+        ],
+    },
+    "fo2": {
+        "fo_id": "fo2", "order_id": "gid://shopify/Order/2", "order_name": "#2002",
+        "store_key": "WL", "store_label": "Watson Luxe",
+        "created_at": (now - timedelta(hours=5)).isoformat(), "fulfill_by": None,
+        "customer_name": "Sam R.", "order_admin_url": "https://wl.myshopify.com/admin/orders/2",
+        "priority_score": 5,
+        "line_items": [
+            {"sku": "SKU-A", "title": "Denim Shorts", "variant_title": "36 / Black", "qty": 1, "bin_name": "A11", "picked": False},
+            {"sku": "SKU-B", "title": "Jersey", "variant_title": "L", "qty": 1, "bin_name": "", "picked": True},
+        ],
+    },
+}
+
+buckets = server.build_buckets()
+check("build_buckets creates one row for 'A'", [r["row"] for r in buckets["rows"]] == ["A"])
+a_row = buckets["rows"][0]
+check("build_buckets creates one cell for box 11", [c["bin_name"] for c in a_row["cells"]] == ["A11"])
+a11_items = a_row["cells"][0]["items"]
+check("A11's SKU-A quantity is aggregated across both orders (2 + 1 = 3)",
+      a11_items[0]["sku"] == "SKU-A" and a11_items[0]["qty"] == 3)
+check("the item with no bin_name lands in unassigned",
+      len(buckets["unassigned"]) == 1 and buckets["unassigned"][0]["sku"] == "SKU-B")
+
+orders_list = server.build_orders_list()
+check("build_orders_list sorts by priority_score, highest first",
+      [o["order_name"] for o in orders_list] == ["#1001", "#2002"])
+fo2_result = next(o for o in orders_list if o["order_name"] == "#2002")
+check("build_orders_list counts picked items correctly (1 of 2 picked)",
+      fo2_result["item_count"] == 2 and fo2_result["picked_count"] == 1 and fo2_result["all_picked"] is False)
+fo1_result = next(o for o in orders_list if o["order_name"] == "#1001")
+check("build_orders_list marks an order all_picked only when every item is picked",
+      fo1_result["all_picked"] is False)
+check("build_orders_list carries order_admin_url through for the Label button",
+      fo1_result["order_admin_url"] == "https://ase.myshopify.com/admin/orders/1")
 
 if failures:
     raise SystemExit(f"{failures} selftest failure(s)")

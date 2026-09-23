@@ -182,7 +182,12 @@ query GetOpenOrders($cursor: String, $filterQuery: String!) {
                     sku
                     productTitle
                     remainingQuantity
-                    lineItem { variantTitle }
+                    lineItem {
+                      variantTitle
+                      variant {
+                        metafield(namespace: "custom", key: "bin_name") { value }
+                      }
+                    }
                   }
                 }
               }
@@ -210,8 +215,14 @@ def fetch_open_warehouse_fulfillment_orders(store):
         "fo_id": "...", "order_id": "...", "order_name": "#1023",
         "store_key": "ASE", "store_label": "All Star Elite",
         "created_at": "...", "customer_name": "Jane D.",
-        "line_items": [{"sku": "...", "title": "...", "variant_title": "...", "qty": 2}, ...],
+        "order_admin_url": "https://.../admin/orders/1234567890",
+        "line_items": [{"sku": "...", "title": "...", "variant_title": "...", "qty": 2, "bin_name": "A11"}, ...],
     }
+
+    "bin_name" comes from a "custom.bin_name" metafield on the product
+    VARIANT (e.g. "A11" = row A, box 11 - a physical warehouse storage
+    location) - blank ("") until that field is set on a given variant in
+    Shopify, which the dashboard just shows as unassigned/ungrouped.
 
     Excludes POS orders only (sourceName == "pos") - every other sales
     channel (Shopney, the online store, etc.) is included, per Nisargee's
@@ -262,15 +273,21 @@ def fetch_open_warehouse_fulfillment_orders(store):
                     li = li_edge["node"]
                     if li["remainingQuantity"] <= 0:
                         continue
+                    li_inner = li.get("lineItem") or {}
+                    variant = li_inner.get("variant") or {}
+                    bin_metafield = variant.get("metafield") or {}
                     line_items.append({
                         "sku": li.get("sku") or "",
                         "title": li.get("productTitle") or "",
-                        "variant_title": (li.get("lineItem") or {}).get("variantTitle") or "",
+                        "variant_title": li_inner.get("variantTitle") or "",
                         "qty": li["remainingQuantity"],
+                        "bin_name": (bin_metafield.get("value") or "").strip().upper(),
                     })
 
                 if not line_items:
                     continue
+
+                order_numeric_id = order["id"].rsplit("/", 1)[-1]
 
                 results.append({
                     "fo_id": fo["id"],
@@ -281,6 +298,7 @@ def fetch_open_warehouse_fulfillment_orders(store):
                     "created_at": order["createdAt"],
                     "fulfill_by": fo.get("fulfillBy"),  # real ship-by deadline, if Shopify set one - used by batching.py
                     "customer_name": customer_name,
+                    "order_admin_url": f"https://{store['domain']}/admin/orders/{order_numeric_id}",
                     "line_items": line_items,
                 })
 

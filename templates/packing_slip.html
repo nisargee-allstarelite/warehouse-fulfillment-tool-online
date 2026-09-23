@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Packing Slip</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1a1d23; margin: 0; padding: 24px; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .toolbar button { background: #0f766e; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  .order-block { border: 1px solid #e3e5e9; border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; page-break-inside: avoid; }
+  .order-block h2 { margin: 0 0 4px 0; font-size: 16px; }
+  .order-block .store { color: #6b7280; font-size: 13px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: #6b7280; padding: 6px 8px; border-bottom: 1px solid #e3e5e9; }
+  tbody td { padding: 6px 8px; font-size: 13px; border-bottom: 1px solid #f1f2f4; }
+  .bin-badge { display: inline-block; background: #f6f7f9; border: 1px solid #e3e5e9; border-radius: 6px; padding: 1px 8px; font-weight: 700; font-size: 12px; }
+  #empty { color: #6b7280; padding: 40px 0; text-align: center; }
+  @media print {
+    .toolbar { display: none; }
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1 style="font-size:18px; margin:0;">Packing Slip - {{ orders|length }} order{{ "" if orders|length == 1 else "s" }}</h1>
+  <button onclick="window.print()">Print</button>
+</div>
+
+{% if not orders %}
+<div id="empty">No orders selected.</div>
+{% endif %}
+
+{% for fo in orders %}
+<div class="order-block">
+  <h2>Order {{ fo.order_name }}</h2>
+  <div class="store">{{ fo.store_label }}</div>
+  <table>
+    <thead>
+      <tr>
+        <th>SKU</th>
+        <th>Bin</th>
+        <th>Item</th>
+        <th>Qty</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for li in fo.line_items %}
+      <tr>
+        <td>{{ li.sku }}</td>
+        <td>{% if li.bin_name %}<span class="bin-badge">{{ li.bin_name }}</span>{% else %}<span style="color:#6b7280;">-</span>{% endif %}</td>
+        <td>{{ li.title }}{% if li.variant_title %} ({{ li.variant_title }}){% endif %}</td>
+        <td>{{ li.qty }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+</body>
+</html>
